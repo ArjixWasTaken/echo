@@ -23,6 +23,9 @@ const val LyricsWaitingDotsPostRollMs = 2_000L
 const val LyricsTransitionDurationMs = 240
 const val LyricsModeTransitionDurationMs = 320
 
+/** Share of the cover height a mode drag travels to fully swap cover and lyrics. */
+const val ModeDragDistanceFraction = 0.4f
+
 
 /** A changing viewport clips a measured layer without resizing its descendants. */
 class PlayerViewportShape(private val heightPx: Float) : Shape {

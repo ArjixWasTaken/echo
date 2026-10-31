@@ -273,6 +273,16 @@ fun SongPlayerItem(
                 remember(playerSheet, listState, heroHeightPx) {
                     derivedStateOf { immersiveContentVisible && heroScrollProgress < 0.6f }
                 }
+            val modeGesturesEnabled by
+                remember(playerSheet, isCurrentItem, selectorMounted) {
+                    derivedStateOf {
+                        isCurrentItem &&
+                            isPlayerScrolledToTop &&
+                            !isBottomBarSticky &&
+                            !selectorMounted &&
+                            (playerSheet?.progressState?.value ?: 1f) > 0.9f
+                    }
+                }
             val coverViewportWidth = maxWidth
             Box(
                 Modifier.fillMaxSize()
@@ -612,6 +622,16 @@ fun SongPlayerItem(
                                     setLyricsChromeCollapsed(false)
                                     chrome.restartTimeout()
                                 }
+                            },
+                            modeGesturesEnabled = modeGesturesEnabled,
+                            onSwipeToLyrics = {
+                                setLyricsChromeCollapsed(false)
+                                chrome.restartTimeout()
+                                presentation.show(PlayerPresentationMode.Lyrics)
+                            },
+                            onSwipeToCover = {
+                                setLyricsChromeCollapsed(false)
+                                presentation.show(PlayerPresentationMode.Cover)
                             },
                         )
                     }

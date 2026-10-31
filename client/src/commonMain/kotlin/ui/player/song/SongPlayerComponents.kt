@@ -3,11 +3,12 @@ package dev.brahmkshatriya.echo.app.ui.player.song
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.SeekableTransitionState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -49,11 +50,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -172,26 +175,32 @@ fun PlayerHero(
     topPadding: Dp,
     viewportWidth: Dp,
     onLargeArtworkClick: () -> Unit,
+    modeGesturesEnabled: Boolean,
+    onSwipeToLyrics: () -> Unit,
+    onSwipeToCover: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val immersiveMode = showLyrics || showKineticShapes
-    // One clock keeps artwork, immersive content and chrome aligned even
-    // when composing the incoming cover takes longer than a frame.
-    val heroTransition =
-        updateTransition(
-            targetState =
-                PlayerHeroTransitionState(
-                    content =
-                        PlayerHeroContentState(
-                            showLyrics,
-                            showKineticShapes,
-                            lyrics,
-                            lyricsTimingIndex,
-                        ),
-                    chromeCollapsed = immersiveMode && collapseTimelineRowsForLyrics,
-                ),
-            label = "Player hero mode",
+    val targetHeroState =
+        PlayerHeroTransitionState(
+            content = PlayerHeroContentState(showLyrics, showKineticShapes, lyrics, lyricsTimingIndex),
+            chromeCollapsed = immersiveMode && collapseTimelineRowsForLyrics,
         )
+    // One clock keeps artwork, immersive content and chrome aligned even
+    // when composing the incoming cover takes longer than a frame. It is
+    // seekable so mode drags can scrub it with the finger.
+    val heroSeek = remember { SeekableTransitionState(targetHeroState) }
+    val heroTransition = rememberTransition(heroSeek, label = "Player hero mode")
+    var dragTarget by remember { mutableStateOf<PlayerHeroTransitionState?>(null) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(targetHeroState, dragTarget == null) {
+        // Releasing a drag settles from wherever the finger left the transition.
+        if (dragTarget == null) heroSeek.animateTo(targetHeroState)
+    }
+    LaunchedEffect(dragTarget) {
+        val target = dragTarget ?: return@LaunchedEffect
+        snapshotFlow { dragFraction }.collect { heroSeek.seekTo(it, target) }
+    }
     val chromeCollapseProgress =
         heroTransition.animateFloat(
             transitionSpec = {
@@ -250,6 +259,26 @@ fun PlayerHero(
             { geometry.coverHeightPx(chromeCollapseProgress.value) }
         }
     var compactArtwork by remember { mutableStateOf(false) }
+    val modeDragDistancePx = { geometry.maxCoverHeightPx * ModeDragDistanceFraction }
+    fun startModeDrag(toLyrics: Boolean) {
+        if (toLyrics) lyricsMounted = true
+        dragFraction = 0f
+        dragTarget =
+            PlayerHeroTransitionState(
+                content =
+                    PlayerHeroContentState(
+                        showLyrics = toLyrics,
+                        showKineticShapes = false,
+                        lyrics = lyrics,
+                        timingIndex = lyricsTimingIndex,
+                    ),
+                chromeCollapsed = false,
+            )
+    }
+    fun releaseModeDrag(commit: Boolean, onCommit: () -> Unit) {
+        dragTarget = null
+        if (commit) onCommit()
+    }
 
     val currentOnLyricsChromeInteraction by rememberUpdatedState(onLyricsChromeInteraction)
     val currentOnKineticShapesChromeClick by rememberUpdatedState(onKineticShapesChromeClick)
@@ -277,7 +306,18 @@ fun PlayerHero(
         modifier = modifier.then(if (immersiveMode) Modifier.clipToBounds() else Modifier),
         content = {
             TopBar(media?.album, transformModifier)
-            Box(transformModifier.then(chromeInteractionModifier)) {
+            Box(
+                transformModifier
+                    .then(chromeInteractionModifier)
+                    .heroModeDrag(
+                        enabled = modeGesturesEnabled && showLyrics,
+                        direction = HeroDragDirection.Up,
+                        distancePx = modeDragDistancePx,
+                        onStart = { startModeDrag(toLyrics = false) },
+                        onProgress = { dragFraction = it },
+                        onRelease = { releaseModeDrag(it, onSwipeToCover) },
+                    )
+            ) {
                 timelineContent(
                     timelineGeometry,
                     immersiveMode && collapseTimelineRowsForLyrics,
@@ -358,7 +398,18 @@ fun PlayerHero(
             ) {
                 // Keep artwork ready behind the immersive pages so returning
                 // to it does not build an image subtree on the first frame.
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = coverVisibility.value }) {
+                Box(
+                    Modifier.fillMaxSize()
+                        .graphicsLayer { alpha = coverVisibility.value }
+                        .heroModeDrag(
+                            enabled = modeGesturesEnabled && !immersiveMode && !compactArtwork,
+                            direction = HeroDragDirection.Down,
+                            distancePx = modeDragDistancePx,
+                            onStart = { startModeDrag(toLyrics = true) },
+                            onProgress = { dragFraction = it },
+                            onRelease = { releaseModeDrag(it, onSwipeToLyrics) },
+                        )
+                ) {
                     CoverArt(
                         album = media?.album,
                         topPadding = topPadding,
